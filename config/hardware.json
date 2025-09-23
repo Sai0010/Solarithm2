@@ -1,0 +1,83 @@
+{
+  "sensors": {
+    "bh1750": {
+      "type": "i2c",
+      "scl_pin": 3,
+      "sda_pin": 2,
+      "address": "0x23",
+      "db_column": "lux"
+    },
+    "acs712": {
+      "type": "analog",
+      "adc": "mcp3008",
+      "channel": 0,
+      "conversion_factor": 0.185,
+      "db_column": "current_a"
+    },
+    "zmpt101b": {
+      "type": "analog",
+      "adc": "mcp3008",
+      "channel": 1,
+      "conversion_factor": 0.00489,
+      "db_column": "voltage_v"
+    },
+    "dht22": {
+      "type": "digital",
+      "pin": 4,
+      "db_columns": {
+        "temperature": "temp_c",
+        "humidity": "humidity_pct"
+      }
+    }
+  },
+  "adc": {
+    "mcp3008": {
+      "spi_port": 0,
+      "spi_device": 0,
+      "clk_pin": 11,
+      "miso_pin": 9,
+      "mosi_pin": 10,
+      "cs_pin": 8
+    }
+  },
+  "relays": {
+    "relay_1": {
+      "pin": 17,
+      "name": "Solar Panel Connection",
+      "default_state": false,
+      "db_column": "relay_1"
+    },
+    "relay_2": {
+      "pin": 27,
+      "name": "Battery Charging",
+      "default_state": false,
+      "db_column": "relay_2"
+    },
+    "relay_3": {
+      "pin": 22,
+      "name": "Load Connection",
+      "default_state": false,
+      "db_column": "relay_3"
+    },
+    "relay_4": {
+      "pin": 23,
+      "name": "Auxiliary Power",
+      "default_state": false,
+      "db_column": "relay_4"
+    }
+  },
+  "charge_controller": {
+    "type": "pwm",
+    "control_pin": 18,
+    "frequency": 1000,
+    "max_duty_cycle": 100
+  },
+  "simulation": {
+    "enabled": true,
+    "voltage_range": [0, 25],
+    "current_range": [0, 10],
+    "temperature_range": [10, 40],
+    "humidity_range": [20, 90],
+    "lux_range": [0, 100000]
+  }
+}
