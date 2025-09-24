@@ -40,6 +40,15 @@ async def startup_event():
     logger.info("Starting SolArithm API")
     # Create tables if they don't exist
     Base.metadata.create_all(bind=engine)
+    
+@app.get("/")
+async def root():
+    """Root endpoint that redirects to documentation."""
+    return {
+        "message": "Welcome to SolArithm API",
+        "documentation": "/docs",
+        "status": "online"
+    }
 
 @app.get("/api/health", response_model=HealthResponse)
 async def health_check():

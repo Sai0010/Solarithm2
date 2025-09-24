@@ -12,9 +12,11 @@ class MLClient:
     
     def __init__(self):
         """Initialize ML client, checking for model and scaler."""
-        self.model_path = Path("../ml_model/trained_lstm.h5")
-        self.scaler_path = Path("../ml_model/scaler.pkl")
-        self.config_path = Path("../ml_model/train_config.json")
+        # Use absolute paths to ensure files are found regardless of working directory
+        base_dir = Path(os.path.dirname(os.path.abspath(__file__))).parent
+        self.model_path = base_dir / "ml_model" / "trained_lstm.keras"
+        self.scaler_path = base_dir / "ml_model" / "scaler.pkl"
+        self.config_path = base_dir / "ml_model" / "train_config.json"
         
         # Check if model and scaler exist
         self.model_available = self._check_model_available()

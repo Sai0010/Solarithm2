@@ -21,7 +21,7 @@ class SensorReading(SensorReadingBase):
     timestamp: datetime
     
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class RelayControlBase(BaseModel):
     """Base schema for relay control."""
@@ -39,7 +39,7 @@ class RelayControl(RelayControlBase):
     timestamp: datetime
     
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class HealthResponse(BaseModel):
     """Schema for health check response."""

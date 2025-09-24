@@ -1,0 +1,23 @@
+{
+    "sequence_length": 24,
+    "forecast_horizon": 6,
+    "test_size": 0.2,
+    "validation_size": 0.2,
+    "batch_size": 32,
+    "epochs": 50,
+    "patience": 10,
+    "learning_rate": 0.001,
+    "dropout_rate": 0.2,
+    "lstm_units": [
+        64,
+        32
+    ],
+    "features": [
+        "voltage",
+        "current",
+        "temp",
+        "humidity",
+        "lux"
+    ],
+    "target": "power"
+}

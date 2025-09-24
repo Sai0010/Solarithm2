@@ -45,8 +45,8 @@ class SolarLSTMTrainer:
             "learning_rate": 0.001, # Initial learning rate
             "dropout_rate": 0.2,    # Dropout rate
             "lstm_units": [64, 32], # LSTM layer units
-            "features": ["voltage_v", "current_a", "temp_c", "humidity_pct", "lux"],
-            "target": "power_w"
+            "features": ["voltage", "current", "temp", "humidity", "lux"],
+            "target": "power"
         }
         
         # Update with provided configuration
@@ -54,7 +54,7 @@ class SolarLSTMTrainer:
             self.config.update(config)
             
         # Output paths
-        self.model_path = self.base_dir / "trained_lstm.h5"
+        self.model_path = self.base_dir / "trained_lstm.keras"
         self.scaler_path = self.base_dir / "scaler.pkl"
         self.config_path = self.base_dir / "train_config.json"
         
@@ -550,4 +550,4 @@ if __name__ == "__main__":
 if __name__ == "__main__":
     # Run the training pipeline
     trainer = SolarLSTMTrainer()
-    trainer.run_pipeline()
+    trainer.run()
