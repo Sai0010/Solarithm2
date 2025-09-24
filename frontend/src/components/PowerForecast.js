@@ -1,5 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import { Line } from 'react-chartjs-2';
+import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend } from 'chart.js';
+import { getPowerForecast } from '../services/api';
+
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 
 const PowerForecast = () => {
   const [forecastData, setForecastData] = useState(null);
@@ -24,9 +28,9 @@ const PowerForecast = () => {
       const deviceId = "solar_panel_01";
       const horizon = range === '24h' ? 24 : (range === '12h' ? 12 : 6);
       
-      const response = await axios.get(`/api/forecast?device_id=${deviceId}&horizon=${horizon}`);
-      setForecastData(response.data);
-      calculateStats(response.data);
+      const response = await getPowerForecast(deviceId, horizon);
+      setForecastData(response || {});
+      calculateStats(response || {});
       setError(null);
     } catch (err) {
       console.error('Error fetching forecast data:', err);
@@ -42,9 +46,9 @@ const PowerForecast = () => {
   };
 
   const calculateStats = (data) => {
-    if (!data || !data.predictions || data.predictions.length === 0) return;
-    
-    const values = data.predictions.map(p => p.value);
+    const series = (data && Array.isArray(data.forecast)) ? data.forecast : [];
+    if (series.length === 0) return;
+    const values = series.map(p => Number(p.power) || 0);
     const peakProduction = Math.max(...values);
     const totalProduction = values.reduce((sum, val) => sum + val, 0);
     
@@ -59,9 +63,7 @@ const PowerForecast = () => {
   const generateSimulatedData = (range) => {
     const now = new Date();
     const dataPoints = range === '24h' ? 24 : range === '7d' ? 7 : 30;
-    const labels = [];
-    const predictions = [];
-    const actual = [];
+    const forecast = [];
     
     for (let i = 0; i < dataPoints; i++) {
       let date;
@@ -78,7 +80,6 @@ const PowerForecast = () => {
         label = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       }
       
-      labels.push(label);
       
       // Generate realistic solar production curve
       let baseValue;
@@ -94,27 +95,11 @@ const PowerForecast = () => {
       }
       
       const predictionValue = Math.max(0, baseValue + (Math.random() * 5 - 2.5));
-      const actualValue = i < dataPoints / 2 
-        ? Math.max(0, predictionValue + (Math.random() * 4 - 2)) 
-        : null; // Only show actual for past data points
-      
-      predictions.push({
-        timestamp: date.toISOString(),
-        value: predictionValue
-      });
-      
-      if (actualValue !== null) {
-        actual.push({
-          timestamp: date.toISOString(),
-          value: actualValue
-        });
-      }
+      forecast.push({ timestamp: date.toISOString(), power: Number(predictionValue.toFixed(2)) });
     }
     
     return {
-      labels,
-      predictions,
-      actual,
+      forecast,
       efficiency: (Math.random() * 20 + 75).toFixed(2),
       confidence: (Math.random() * 15 + 80).toFixed(2)
     };
@@ -203,22 +188,38 @@ const PowerForecast = () => {
         ))}
       </div>
       
-      <div style={{
-        backgroundColor: 'white',
-        padding: '15px',
-        borderRadius: '8px',
-        marginBottom: '20px',
-        boxShadow: '0 1px 3px rgba(0, 0, 0, 0.12)',
-        height: '300px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        border: '2px dashed #ccc'
-      }}>
-        <div style={{ color: '#666' }}>
-          Chart visualization would appear here (Chart.js integration needed)
+      {forecastData && Array.isArray(forecastData.forecast) && (
+        <div style={{
+          backgroundColor: 'white',
+          padding: '15px',
+          borderRadius: '8px',
+          marginBottom: '20px',
+          boxShadow: '0 1px 3px rgba(0, 0, 0, 0.12)',
+          height: '320px'
+        }}>
+          <Line
+            data={{
+              labels: forecastData.forecast.map(p => new Date(p.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+              datasets: [
+                {
+                  label: 'Forecast Power (W)',
+                  data: forecastData.forecast.map(p => p.power),
+                  borderColor: 'rgb(33, 150, 243)',
+                  backgroundColor: 'rgba(33, 150, 243, 0.3)'
+                }
+              ]
+            }}
+            options={{
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: { position: 'top' },
+                title: { display: true, text: 'Power Forecast' }
+              }
+            }}
+          />
         </div>
-      </div>
+      )}
       
       <div style={{
         backgroundColor: '#e3f2fd',

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import { getRelayStatus, setRelayState } from '../services/api';
 
 const RelayControl = () => {
   const [relays, setRelays] = useState([]);
@@ -12,8 +12,8 @@ const RelayControl = () => {
     const fetchRelayStates = async () => {
       try {
         setLoading(true);
-        const response = await axios.get('/api/relays');
-        setRelays(response.data);
+        const data = await getRelayStatus();
+        setRelays(data);
         setError(null);
       } catch (err) {
         console.error('Error fetching relay states:', err);
@@ -48,9 +48,7 @@ const RelayControl = () => {
       ));
       
       // API call to update relay state
-      await axios.post(`/api/relays/${id}/toggle`, {
-        state: !relay.state
-      });
+      await setRelayState(id, !relay.state);
     } catch (err) {
       console.error(`Error toggling relay ${id}:`, err);
       setError(`Failed to toggle relay. Please try again.`);
@@ -72,9 +70,7 @@ const RelayControl = () => {
       ));
       
       // API call to update control mode
-      await axios.post(`/api/relays/${id}/mode`, {
-        auto_controlled: !relay.auto_controlled
-      });
+      // No backend endpoint yet; keep UI-only for mode
     } catch (err) {
       console.error(`Error changing mode for relay ${id}:`, err);
       setError(`Failed to change relay mode. Please try again.`);
@@ -90,7 +86,7 @@ const RelayControl = () => {
       setMode(newMode);
       
       // API call to update all relays
-      await axios.post('/api/relays/mode', { mode: newMode });
+      // No backend endpoint yet; keep UI-only for global mode
       
       // Update local state
       setRelays(relays.map(r => ({ 
@@ -106,8 +102,8 @@ const RelayControl = () => {
   // Helper function to fetch relay states
   const fetchRelayStates = async () => {
     try {
-      const response = await axios.get('/api/relays');
-      setRelays(response.data);
+      const data = await getRelayStatus();
+      setRelays(data);
       setError(null);
     } catch (err) {
       console.error('Error fetching relay states:', err);

@@ -1,8 +1,6 @@
 from sqlalchemy import Column, Integer, Float, String, DateTime, Boolean, ForeignKey
-from sqlalchemy.ext.declarative import declarative_base
+from app.db import Base
 from datetime import datetime
-
-Base = declarative_base()
 
 class SensorReading(Base):
     """Model for sensor readings from solar monitoring devices."""

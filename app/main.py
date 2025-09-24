@@ -4,6 +4,7 @@ from typing import List, Optional
 import pandas as pd
 
 from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.db import get_db, engine
@@ -49,6 +50,11 @@ async def root():
         "documentation": "/docs",
         "status": "online"
     }
+
+@app.get("/favicon.ico")
+async def favicon():
+    """Return empty favicon to avoid 404 noise in logs."""
+    return Response(status_code=204)
 
 @app.get("/api/health", response_model=HealthResponse)
 async def health_check():
