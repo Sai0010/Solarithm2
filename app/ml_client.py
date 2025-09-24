@@ -22,18 +22,36 @@ class MLClient:
         self.model_available = self._check_model_available()
         
         if self.model_available:
-            logger.info("ML model and scaler found, using LSTM for predictions")
-            # Lazy import TensorFlow to avoid dependency if not needed
-            import tensorflow as tf
-            import pickle
-            import json
-            
-            # Load model, scaler and config
-            self.model = tf.keras.models.load_model(self.model_path)
-            with open(self.scaler_path, 'rb') as f:
-                self.scaler = pickle.load(f)
-            with open(self.config_path, 'r') as f:
-                self.config = json.load(f)
+            try:
+                logger.info("ML model and scaler found, using LSTM for predictions")
+                # Lazy import TensorFlow to avoid dependency if not needed
+                import tensorflow as tf
+                import pickle
+                import json
+                
+                # Load model, scaler and config
+                self.model = tf.keras.models.load_model(self.model_path)
+                
+                # Handle scaler loading with fallback to manual StandardScaler creation
+                try:
+                    with open(self.scaler_path, 'rb') as f:
+                        self.scaler = pickle.load(f)
+                except Exception as e:
+                    logger.warning(f"Failed to load scaler: {str(e)}. Creating a new StandardScaler.")
+                    # Create a new scaler as fallback
+                    from sklearn.preprocessing import StandardScaler
+                    self.scaler = StandardScaler()
+                    # We'll fit this scaler on first prediction
+                    self.scaler_needs_fitting = True
+                else:
+                    self.scaler_needs_fitting = False
+                    
+                with open(self.config_path, 'r') as f:
+                    self.config = json.load(f)
+            except Exception as e:
+                logger.error(f"Error loading ML model: {str(e)}")
+                self.model_available = False
+                logger.warning("Falling back to baseline prediction")
         else:
             logger.warning("ML model or scaler not found, will use baseline prediction")
     
@@ -69,7 +87,17 @@ class MLClient:
     def _predict_with_model(self, recent_df, horizon):
         """Make predictions using the LSTM model."""
         # Extract features used during training
-        features = recent_df[['voltage_v', 'current_a', 'temp_c', 'lux']]
+        try:
+            features = recent_df[['voltage', 'current', 'temp', 'lux']]
+        except KeyError:
+            # Try alternative column names if the first attempt fails
+            features = recent_df[['voltage_v', 'current_a', 'temp_c', 'lux']]
+        
+        # Fit scaler if needed
+        if hasattr(self, 'scaler_needs_fitting') and self.scaler_needs_fitting:
+            logger.info("Fitting scaler on current data")
+            self.scaler.fit(features)
+            self.scaler_needs_fitting = False
         
         # Scale features
         scaled_features = self.scaler.transform(features)
