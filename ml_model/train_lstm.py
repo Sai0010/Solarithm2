@@ -4,13 +4,15 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
-from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
+from tensorflow.keras.optimizers import Adam
 from sklearn.preprocessing import StandardScaler
 import pickle
 import json
 import os
 from pathlib import Path
 import logging
+from datetime import datetime
 
 # Configure logging
 logging.basicConfig(
@@ -19,33 +21,39 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Set random seeds for reproducibility
+np.random.seed(42)
+tf.random.set_seed(42)
+
 class SolarLSTMTrainer:
-    """LSTM model trainer for solar power forecasting."""
+    """Trainer for LSTM model for solar power forecasting."""
     
-    def __init__(self, config=None):
-        """Initialize trainer with configuration."""
+    def __init__(self, data_path=None, config=None):
+        """Initialize trainer with data path and configuration."""
+        self.base_dir = Path(__file__).parent
+        self.data_path = data_path or self.base_dir / "data" / "solar_data.csv"
+        
         # Default configuration
         self.config = {
-            "data_path": "data/solar_data.csv",
-            "window_size": 24,  # 24 hours of data for prediction
-            "train_split": 0.8,
-            "resample_freq": "1H",  # 1 hour resampling
-            "lstm_units": 64,
-            "dropout_rate": 0.2,
-            "learning_rate": 0.001,
-            "batch_size": 32,
-            "epochs": 100,
-            "patience": 10,  # Early stopping patience
-            "features": ["voltage", "current", "temp", "lux"],
-            "target": "power"
+            "sequence_length": 24,  # Hours of data to use for prediction
+            "forecast_horizon": 6,  # Hours to predict ahead
+            "test_size": 0.2,       # Fraction of data for testing
+            "validation_size": 0.2, # Fraction of training data for validation
+            "batch_size": 32,       # Mini-batch size
+            "epochs": 50,           # Maximum epochs
+            "patience": 10,         # Early stopping patience
+            "learning_rate": 0.001, # Initial learning rate
+            "dropout_rate": 0.2,    # Dropout rate
+            "lstm_units": [64, 32], # LSTM layer units
+            "features": ["voltage_v", "current_a", "temp_c", "humidity_pct", "lux"],
+            "target": "power_w"
         }
         
-        # Update with provided config
+        # Update with provided configuration
         if config:
             self.config.update(config)
-        
-        # Paths for saving model artifacts
-        self.base_dir = Path(__file__).parent
+            
+        # Output paths
         self.model_path = self.base_dir / "trained_lstm.h5"
         self.scaler_path = self.base_dir / "scaler.pkl"
         self.config_path = self.base_dir / "train_config.json"
@@ -55,122 +63,425 @@ class SolarLSTMTrainer:
         self.scaler = None
         self.model = None
         self.history = None
-    
+
     def load_data(self):
-        """Load and preprocess the solar data."""
-        logger.info(f"Loading data from {self.config['data_path']}")
-        
-        # Load data
-        data_path = self.base_dir / self.config["data_path"]
-        self.data = pd.read_csv(data_path)
-        
-        # Convert timestamp to datetime
-        self.data["timestamp"] = pd.to_datetime(self.data["timestamp"])
-        self.data.set_index("timestamp", inplace=True)
-        
-        # Resample if specified
-        if self.config["resample_freq"]:
-            logger.info(f"Resampling data to {self.config['resample_freq']} frequency")
-            self.data = self.data.resample(self.config["resample_freq"]).mean()
-        
-        # Fill missing values
-        self.data.fillna(method="ffill", inplace=True)
-        self.data.fillna(method="bfill", inplace=True)
-        
-        logger.info(f"Data loaded and preprocessed: {len(self.data)} rows")
-        return self.data
+        """Load and preprocess the data."""
+        try:
+            logger.info(f"Loading data from {self.data_path}")
+            self.data = pd.read_csv(self.data_path)
+            
+            # Check if timestamp column exists and convert to datetime
+            if 'ts' in self.data.columns:
+                self.data['ts'] = pd.to_datetime(self.data['ts'])
+                self.data = self.data.sort_values('ts')
+            
+            # Check for missing values
+            missing = self.data.isnull().sum()
+            if missing.sum() > 0:
+                logger.warning(f"Missing values detected: {missing[missing > 0]}")
+                logger.info("Filling missing values with forward fill then backward fill")
+                self.data = self.data.fillna(method='ffill').fillna(method='bfill')
+                
+            logger.info(f"Data loaded successfully with shape {self.data.shape}")
+            return True
+        except Exception as e:
+            logger.error(f"Error loading data: {str(e)}")
+            return False
     
     def prepare_sequences(self):
         """Prepare sequences for LSTM training."""
-        logger.info("Preparing sequences for LSTM training")
+        features = self.config["features"]
+        target = self.config["target"]
+        seq_length = self.config["sequence_length"]
         
-        # Extract features and target
-        features = self.data[self.config["features"]].values
-        target = self.data[self.config["target"]].values
+        # Check if all features and target exist in data
+        missing_cols = [col for col in features + [target] if col not in self.data.columns]
+        if missing_cols:
+            logger.error(f"Missing columns in data: {missing_cols}")
+            return None, None, None, None, None, None
         
         # Scale features
         self.scaler = StandardScaler()
-        scaled_features = self.scaler.fit_transform(features)
+        scaled_features = self.scaler.fit_transform(self.data[features])
+        scaled_df = pd.DataFrame(scaled_features, columns=features)
         
         # Create sequences
         X, y = [], []
-        window_size = self.config["window_size"]
-        
-        for i in range(len(scaled_features) - window_size):
-            X.append(scaled_features[i:i+window_size])
-            y.append(target[i+window_size])
+        for i in range(len(self.data) - seq_length):
+            X.append(scaled_df.iloc[i:i+seq_length].values)
+            y.append(self.data[target].iloc[i+seq_length])
         
         X = np.array(X)
         y = np.array(y)
         
-        # Split into train and test
-        train_size = int(len(X) * self.config["train_split"])
-        X_train, X_test = X[:train_size], X[train_size:]
-        y_train, y_test = y[:train_size], y[train_size:]
+        # Split into train, validation, and test sets
+        test_size = int(len(X) * self.config["test_size"])
+        train_val_X, test_X = X[:-test_size], X[-test_size:]
+        train_val_y, test_y = y[:-test_size], y[-test_size:]
         
-        logger.info(f"Sequences prepared: {len(X_train)} training, {len(X_test)} testing")
-        return X_train, y_train, X_test, y_test
+        val_size = int(len(train_val_X) * self.config["validation_size"])
+        train_X, val_X = train_val_X[:-val_size], train_val_X[-val_size:]
+        train_y, val_y = train_val_y[:-val_size], train_val_y[-val_size:]
+        
+        logger.info(f"Training set: {train_X.shape}, Validation set: {val_X.shape}, Test set: {test_X.shape}")
+        return train_X, train_y, val_X, val_y, test_X, test_y
     
-    def build_model(self):
-        """Build the LSTM model."""
-        logger.info("Building LSTM model")
-        
-        # Get input shape
-        n_features = len(self.config["features"])
-        window_size = self.config["window_size"]
-        
-        # Create model
+    def build_model(self, input_shape):
+        """Build the LSTM model architecture."""
         model = Sequential()
         
-        # First LSTM layer
-        model.add(LSTM(
-            units=self.config["lstm_units"],
-            return_sequences=True,
-            input_shape=(window_size, n_features)
-        ))
-        model.add(Dropout(self.config["dropout_rate"]))
-        
-        # Second LSTM layer
-        model.add(LSTM(units=self.config["lstm_units"] // 2))
-        model.add(Dropout(self.config["dropout_rate"]))
+        # Add LSTM layers with specified units
+        lstm_units = self.config["lstm_units"]
+        for i, units in enumerate(lstm_units):
+            return_sequences = i < len(lstm_units) - 1  # Return sequences for all but last LSTM layer
+            if i == 0:
+                model.add(LSTM(units, activation='relu', return_sequences=return_sequences, 
+                              input_shape=input_shape))
+            else:
+                model.add(LSTM(units, activation='relu', return_sequences=return_sequences))
+            
+            # Add dropout after each LSTM layer
+            model.add(Dropout(self.config["dropout_rate"]))
         
         # Output layer
-        model.add(Dense(units=1))
+        model.add(Dense(1))
         
-        # Compile model
-        model.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=self.config["learning_rate"]),
-            loss="mse"
-        )
+        # Compile model with Adam optimizer and learning rate
+        optimizer = Adam(learning_rate=self.config["learning_rate"])
+        model.compile(optimizer=optimizer, loss='mse', metrics=['mae'])
         
-        self.model = model
-        logger.info(f"Model built: {model.summary()}")
+        logger.info(f"Model built with {len(lstm_units)} LSTM layers")
+        model.summary(print_fn=logger.info)
         return model
     
-    def train_model(self, X_train, y_train, X_test, y_test):
+    def train(self):
+        """Train the LSTM model with mini-batch processing."""
+        if self.data is None and not self.load_data():
+            logger.error("Failed to load data for training")
+            return False
+        
+        # Prepare sequences
+        train_data = self.prepare_sequences()
+        if train_data is None:
+            logger.error("Failed to prepare sequences for training")
+            return False
+        
+        train_X, train_y, val_X, val_y, test_X, test_y = train_data
+        
+        # Build model
+        input_shape = (train_X.shape[1], train_X.shape[2])
+        self.model = self.build_model(input_shape)
+        
+        # Setup callbacks for training
+        callbacks = [
+            # Early stopping to prevent overfitting
+            EarlyStopping(
+                monitor='val_loss',
+                patience=self.config["patience"],
+                restore_best_weights=True,
+                verbose=1
+            ),
+            # Reduce learning rate when training plateaus
+            ReduceLROnPlateau(
+                monitor='val_loss',
+                factor=0.5,
+                patience=5,
+                min_lr=1e-6,
+                verbose=1
+            ),
+            # Save best model during training
+            ModelCheckpoint(
+                filepath=str(self.model_path),
+                monitor='val_loss',
+                save_best_only=True,
+                verbose=1
+            )
+        ]
+        
+        # Train model with mini-batch processing
+        logger.info(f"Starting model training with batch size {self.config['batch_size']}")
+        start_time = datetime.now()
+        
+        self.history = self.model.fit(
+            train_X, train_y,
+            validation_data=(val_X, val_y),
+            epochs=self.config["epochs"],
+            batch_size=self.config["batch_size"],
+            callbacks=callbacks,
+            verbose=2
+        )
+        
+        training_time = datetime.now() - start_time
+        logger.info(f"Model training completed in {training_time}")
+        
+        # Evaluate on test set
+        test_loss, test_mae = self.model.evaluate(test_X, test_y, verbose=0)
+        logger.info(f"Test Loss: {test_loss:.4f}, Test MAE: {test_mae:.4f}")
+        
+        # Save artifacts
+        self.save_artifacts()
+        
+        return True
+    
+    def save_artifacts(self):
+        """Save model, scaler, and configuration."""
+        try:
+            # Save model
+            if self.model:
+                self.model.save(self.model_path)
+                logger.info(f"Model saved to {self.model_path}")
+            
+            # Save scaler
+            if self.scaler:
+                with open(self.scaler_path, 'wb') as f:
+                    pickle.dump(self.scaler, f)
+                logger.info(f"Scaler saved to {self.scaler_path}")
+            
+            # Save configuration
+            with open(self.config_path, 'w') as f:
+                json.dump(self.config, f, indent=4)
+            logger.info(f"Configuration saved to {self.config_path}")
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error saving artifacts: {str(e)}")
+            return False
+    
+    def plot_history(self, save_path=None):
+        """Plot training history."""
+        if not self.history:
+            logger.warning("No training history available to plot")
+            return
+        
+        plt.figure(figsize=(12, 5))
+        
+        # Plot loss
+        plt.subplot(1, 2, 1)
+        plt.plot(self.history.history['loss'], label='Training Loss')
+        plt.plot(self.history.history['val_loss'], label='Validation Loss')
+        plt.title('Model Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.legend()
+        
+        # Plot MAE
+        plt.subplot(1, 2, 2)
+        plt.plot(self.history.history['mae'], label='Training MAE')
+        plt.plot(self.history.history['val_mae'], label='Validation MAE')
+        plt.title('Model MAE')
+        plt.xlabel('Epoch')
+        plt.ylabel('MAE')
+        plt.legend()
+        
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path)
+            logger.info(f"Training history plot saved to {save_path}")
+        else:
+            plt.show()
+            
+    def predict(self, input_data):
+        """Make predictions using the trained model."""
+        if self.model is None:
+            logger.error("Model not trained or loaded")
+            return None
+            
+        if self.scaler is None:
+            logger.error("Scaler not available")
+            return None
+            
+        # Ensure input data has correct shape
+        if len(input_data.shape) == 2:  # Single sample
+            input_data = np.expand_dims(input_data, axis=0)
+            
+        # Make prediction
+        predictions = self.model.predict(input_data)
+        return predictions.flatten()
+    
+    def run(self):
+        """Run the full training pipeline."""
+        logger.info("Starting LSTM model training pipeline")
+        
+        # Load data
+        if not self.load_data():
+            logger.error("Failed to load data. Aborting training.")
+            return False
+            
+        # Train model
+        if not self.train():
+            logger.error("Failed to train model. Aborting.")
+            return False
+            
+        # Plot and save training history
+        history_plot_path = self.base_dir / "training_history.png"
+        self.plot_history(save_path=history_plot_path)
+        
+        logger.info("Training pipeline completed successfully")
+        return True
+        
+    def run(self):
+        """Run the full training pipeline."""
+        logger.info("Starting LSTM model training pipeline")
+        
+        # Load data
+        if not self.load_data():
+            logger.error("Failed to load data. Aborting training.")
+            return False
+            
+        # Train model
+        if not self.train():
+            logger.error("Failed to train model. Aborting.")
+            return False
+            
+        # Plot and save training history
+        history_plot_path = self.base_dir / "training_history.png"
+        self.plot_history(save_path=history_plot_path)
+        
+        logger.info("Training pipeline completed successfully")
+        return True
+
+
+if __name__ == "__main__":
+    # Create and run trainer
+    trainer = SolarLSTMTrainer()
+    trainer.run()
+    
+    def load_data(self):
+        """Load and preprocess the data."""
+        try:
+            logger.info(f"Loading data from {self.data_path}")
+            self.data = pd.read_csv(self.data_path)
+            
+            # Check if timestamp column exists and convert to datetime
+            if 'ts' in self.data.columns:
+                self.data['ts'] = pd.to_datetime(self.data['ts'])
+                self.data = self.data.sort_values('ts')
+            
+            # Check for missing values
+            missing = self.data.isnull().sum()
+            if missing.sum() > 0:
+                logger.warning(f"Missing values detected: {missing[missing > 0]}")
+                logger.info("Filling missing values with forward fill then backward fill")
+                self.data = self.data.fillna(method='ffill').fillna(method='bfill')
+                
+            logger.info(f"Data loaded successfully with shape {self.data.shape}")
+            return True
+        except Exception as e:
+            logger.error(f"Error loading data: {str(e)}")
+            return False
+    
+    def prepare_sequences(self):
+        """Prepare sequences for LSTM training."""
+        features = self.config["features"]
+        target = self.config["target"]
+        seq_length = self.config["sequence_length"]
+        
+        # Check if all features and target exist in data
+        missing_cols = [col for col in features + [target] if col not in self.data.columns]
+        if missing_cols:
+            logger.error(f"Missing columns in data: {missing_cols}")
+            return None, None, None, None, None, None
+        
+        # Scale features
+        self.scaler = StandardScaler()
+        scaled_features = self.scaler.fit_transform(self.data[features])
+        scaled_df = pd.DataFrame(scaled_features, columns=features)
+        
+        # Create sequences
+        X, y = [], []
+        for i in range(len(self.data) - seq_length):
+            X.append(scaled_df.iloc[i:i+seq_length].values)
+            y.append(self.data[target].iloc[i+seq_length])
+        
+        X = np.array(X)
+        y = np.array(y)
+        
+        # Split into train, validation, and test sets
+        test_size = int(len(X) * self.config["test_size"])
+        train_val_X, test_X = X[:-test_size], X[-test_size:]
+        train_val_y, test_y = y[:-test_size], y[-test_size:]
+        
+        val_size = int(len(train_val_X) * self.config["validation_size"])
+        train_X, val_X = train_val_X[:-val_size], train_val_X[-val_size:]
+        train_y, val_y = train_val_y[:-val_size], train_val_y[-val_size:]
+        
+        logger.info(f"Training set: {train_X.shape}, Validation set: {val_X.shape}, Test set: {test_X.shape}")
+        return train_X, train_y, val_X, val_y, test_X, test_y
+    
+    def build_model(self, input_shape):
+        """Build the LSTM model architecture."""
+        model = Sequential()
+        
+        # Add LSTM layers with specified units
+        lstm_units = self.config["lstm_units"]
+        for i, units in enumerate(lstm_units):
+            return_sequences = i < len(lstm_units) - 1  # Return sequences for all but last LSTM layer
+            if i == 0:
+                model.add(LSTM(units, activation='relu', return_sequences=return_sequences, 
+                              input_shape=input_shape))
+            else:
+                model.add(LSTM(units, activation='relu', return_sequences=return_sequences))
+            
+            # Add dropout after each LSTM layer
+            model.add(Dropout(self.config["dropout_rate"]))
+        
+        # Output layer
+        model.add(Dense(1))
+        
+        # Compile model with Adam optimizer and learning rate
+        optimizer = Adam(learning_rate=self.config["learning_rate"])
+        model.compile(optimizer=optimizer, loss='mse', metrics=['mae'])
+        
+        logger.info(f"Model built with {len(lstm_units)} LSTM layers")
+        model.summary(print_fn=logger.info)
+        return model
+    
+    def train_model(self, train_X, train_y, val_X, val_y):
         """Train the LSTM model."""
         logger.info("Training LSTM model")
         
-        # Early stopping callback
-        early_stopping = EarlyStopping(
-            monitor="val_loss",
-            patience=self.config["patience"],
-            restore_best_weights=True
-        )
+        # Setup callbacks for training
+        callbacks = [
+            # Early stopping to prevent overfitting
+            EarlyStopping(
+                monitor='val_loss',
+                patience=self.config["patience"],
+                restore_best_weights=True,
+                verbose=1
+            ),
+            # Reduce learning rate when training plateaus
+            ReduceLROnPlateau(
+                monitor='val_loss',
+                factor=0.5,
+                patience=5,
+                min_lr=1e-6,
+                verbose=1
+            ),
+            # Save best model during training
+            ModelCheckpoint(
+                filepath=str(self.model_path),
+                monitor='val_loss',
+                save_best_only=True,
+                verbose=1
+            )
+        ]
         
-        # Train model
+        # Train model with mini-batch processing
+        logger.info(f"Starting model training with batch size {self.config['batch_size']}")
+        start_time = datetime.now()
+        
         self.history = self.model.fit(
-            X_train, y_train,
+            train_X, train_y,
+            validation_data=(val_X, val_y),
             epochs=self.config["epochs"],
             batch_size=self.config["batch_size"],
-            validation_data=(X_test, y_test),
-            callbacks=[early_stopping],
-            verbose=1
+            callbacks=callbacks,
+            verbose=2
         )
         
-        # Evaluate model
-        test_loss = self.model.evaluate(X_test, y_test, verbose=0)
-        logger.info(f"Model trained: test loss = {test_loss:.4f}")
+        training_time = datetime.now() - start_time
+        logger.info(f"Model training completed in {training_time}")
         return self.history
     
     def save_artifacts(self):
@@ -218,16 +529,14 @@ class SolarLSTMTrainer:
         logger.info("Starting LSTM training pipeline")
         
         # Load and preprocess data
-        self.load_data()
-        
-        # Prepare sequences
-        X_train, y_train, X_test, y_test = self.prepare_sequences()
-        
-        # Build model
-        self.build_model()
+        if not self.load_data():
+            logger.error("Failed to load data. Aborting training.")
+            return False
         
         # Train model
-        self.train_model(X_train, y_train, X_test, y_test)
+        if not self.train():
+            logger.error("Failed to train model. Aborting.")
+            return False
         
         # Plot history
         self.plot_history()
@@ -236,6 +545,7 @@ class SolarLSTMTrainer:
         self.save_artifacts()
         
         logger.info("LSTM training pipeline completed")
+        return True
 
 if __name__ == "__main__":
     # Run the training pipeline

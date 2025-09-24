@@ -135,7 +135,7 @@ async def get_forecast(
             'temp_c': r.temp_c,
             'humidity_pct': r.humidity_pct,
             'lux': r.lux,
-            'power': r.voltage_v * r.current_a
+            'power_w': r.voltage_v * r.current_a  # Renamed to match ML model expectations
         } for r in readings])
         
         # Get forecast from ML client

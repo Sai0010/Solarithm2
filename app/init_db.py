@@ -28,14 +28,16 @@ def init_db():
             logger.info("Adding sample sensor readings...")
             _create_sample_sensor_data(db)
             logger.info("Sample sensor readings added")
-        
-        if db.query(RelayControl).count() == 0:
-            logger.info("Adding sample relay control events...")
-            _create_sample_relay_events(db)
-            logger.info("Sample relay control events added")
             
+        if db.query(RelayControl).count() == 0:
+            logger.info("Adding sample relay control data...")
+            _create_sample_relay_data(db)
+            logger.info("Sample relay control data added")
+            
+        db.commit()
     except Exception as e:
-        logger.error(f"Error initializing database: {str(e)}")
+        logger.error(f"Error initializing database: {e}")
+        db.rollback()
         raise
     finally:
         db.close()

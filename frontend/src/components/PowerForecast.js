@@ -20,7 +20,11 @@ const PowerForecast = () => {
   const fetchForecastData = async (range) => {
     try {
       setLoading(true);
-      const response = await axios.get(`/api/forecast?range=${range}`);
+      // Default device ID - in a real app, this would come from user selection or context
+      const deviceId = "solar_panel_01";
+      const horizon = range === '24h' ? 24 : (range === '12h' ? 12 : 6);
+      
+      const response = await axios.get(`/api/forecast?device_id=${deviceId}&horizon=${horizon}`);
       setForecastData(response.data);
       calculateStats(response.data);
       setError(null);

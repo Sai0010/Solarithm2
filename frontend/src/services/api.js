@@ -1,63 +1,70 @@
 import axios from 'axios';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
 
-const api = {
-  // Sensor readings
-  getSensorReadings: async () => {
-    try {
-      const response = await axios.get(`${API_URL}/api/sensors/latest`);
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching sensor readings:', error);
-      throw error;
-    }
+const api = axios.create({
+  baseURL: API_BASE_URL,
+  headers: {
+    'Content-Type': 'application/json',
   },
-  
-  // Relay controls
-  getRelayStatus: async () => {
-    try {
-      const response = await axios.get(`${API_URL}/api/relays`);
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching relay status:', error);
-      throw error;
-    }
-  },
-  
-  setRelayState: async (relayId, state) => {
-    try {
-      const response = await axios.post(`${API_URL}/api/relays`, {
-        relay_id: relayId,
-        state: state
-      });
-      return response.data;
-    } catch (error) {
-      console.error('Error setting relay state:', error);
-      throw error;
-    }
-  },
-  
-  // Power forecasting
-  getPowerForecast: async (hours = 24) => {
-    try {
-      const response = await axios.get(`${API_URL}/api/forecast?hours=${hours}`);
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching power forecast:', error);
-      throw error;
-    }
-  },
-  
-  // Health check
-  getSystemHealth: async () => {
-    try {
-      const response = await axios.get(`${API_URL}/health`);
-      return response.data;
-    } catch (error) {
-      console.error('Error checking system health:', error);
-      throw error;
-    }
+});
+
+// Sensor data endpoints
+export const getSensorReadings = async (params) => {
+  try {
+    const response = await api.get('/sensor-readings', { params });
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching sensor readings:', error);
+    throw error;
+  }
+};
+
+// Power forecast endpoints
+export const getPowerForecast = async (deviceId, horizon = 6) => {
+  try {
+    const response = await api.get('/forecast', { 
+      params: { 
+        device_id: deviceId,
+        horizon: horizon 
+      } 
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching power forecast:', error);
+    throw error;
+  }
+};
+
+// System status endpoints
+export const getSystemStatus = async () => {
+  try {
+    const response = await api.get('/system/status');
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching system status:', error);
+    throw error;
+  }
+};
+
+// Relay control endpoints
+export const getRelayStatus = async () => {
+  try {
+    const response = await api.get('/relay/status');
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching relay status:', error);
+    throw error;
+  }
+};
+
+export const setRelayState = async (relayId, state) => {
+  try {
+    const response = await api.post('/relay/control', { relay_id: relayId, state });
+    return response.data;
+  } catch (error) {
+    console.error('Error setting relay state:', error);
+    throw error;
   }
 };
 

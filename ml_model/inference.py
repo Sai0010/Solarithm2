@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import logging
+from datetime import datetime, timedelta
 
 # Configure logging
 logging.basicConfig(
@@ -56,8 +57,14 @@ class SolarPowerPredictor:
                 self.config = json.load(f)
             
             logger.info("Model artifacts loaded successfully")
+            
+            # Extract configuration parameters
+            self.sequence_length = self.config.get("sequence_length", 24)
+            self.features = self.config.get("features", ["voltage_v", "current_a", "temp_c", "humidity_pct", "lux"])
+            self.target = self.config.get("target", "power_w")
+            
         except Exception as e:
-            logger.error(f"Error loading model artifacts: {str(e)}")
+            logger.error(f"Error loading model artifacts: {e}")
             self.model_available = False
     
     def predict(self, recent_df, horizon=6):
@@ -71,19 +78,141 @@ class SolarPowerPredictor:
         Returns:
             List of predicted power values
         """
-        if not isinstance(recent_df, pd.DataFrame) or recent_df.empty:
-            logger.error("Invalid input data for prediction")
-            return []
+        if not self.model_available or recent_df.empty:
+            logger.warning("Using baseline prediction due to missing model or data")
+            return self._baseline_prediction(horizon)
         
         try:
-            if self.model_available:
-                return self._predict_with_model(recent_df, horizon)
-            else:
-                return self._predict_baseline(recent_df, horizon)
+            # Prepare input data
+            X = self._prepare_input_data(recent_df)
+            
+            # Make prediction
+            predictions = []
+            current_input = X
+            
+            for _ in range(horizon):
+                # Predict next step
+                next_pred = self.model.predict(current_input, verbose=0)[0, -1]
+                predictions.append(float(next_pred))
+                
+                # Update input for next prediction (rolling window)
+                next_input = np.append(current_input[0, 1:, :], [[next_pred]], axis=0)
+                current_input = np.array([next_input])
+             
+             # Inverse transform predictions
+                if hasattr(self, 'scaler'):
+                 # Create a dummy array with the right shape for inverse transform
+                 dummy = np.zeros((len(predictions), len(self.features) + 1))
+                 dummy[:, -1] = predictions  # Assuming target is the last column
+                 dummy_inversed = self.scaler.inverse_transform(dummy)
+                 predictions = dummy_inversed[:, -1].tolist()
+             
+                 return predictions
+             
         except Exception as e:
-            logger.error(f"Error during prediction: {str(e)}")
-            # Fallback to baseline even if model is available but fails
-            return self._predict_baseline(recent_df, horizon)
+            logger.error(f"Error during prediction: {e}")
+            return self._baseline_prediction(horizon)
+    
+    def _prepare_input_data(self, df):
+        """
+        Prepare input data for LSTM model.
+        
+        Args:
+            df: DataFrame with recent sensor readings
+            
+        Returns:
+            Numpy array with shape (1, sequence_length, n_features)
+        """
+        # Ensure we have the required features
+        for feature in self.features:
+            if feature not in df.columns:
+                raise ValueError(f"Required feature {feature} not in input data")
+        
+        # Select only the required features
+        df_features = df[self.features].copy()
+        
+        # Scale the features
+        if hasattr(self, 'scaler'):
+            df_features_scaled = pd.DataFrame(
+                self.scaler.transform(df_features),
+                columns=self.features
+            )
+        else:
+            # Simple min-max scaling if no scaler available
+            df_features_scaled = (df_features - df_features.min()) / (df_features.max() - df_features.min() + 1e-10)
+        
+        # Get the last sequence_length rows
+        if len(df_features_scaled) >= self.sequence_length:
+            recent_data = df_features_scaled.iloc[-self.sequence_length:].values
+        else:
+            # Pad with zeros if not enough data
+            padding = np.zeros((self.sequence_length - len(df_features_scaled), len(self.features)))
+            recent_data = np.vstack([padding, df_features_scaled.values])
+        
+        # Reshape for LSTM input [samples, time steps, features]
+        return np.array([recent_data])
+    
+    def _baseline_prediction(self, horizon):
+        """
+        Generate baseline prediction when model is not available.
+        Uses a simple time-of-day based heuristic.
+        
+        Args:
+            horizon: Number of future time steps to predict
+            
+        Returns:
+            List of predicted power values
+        """
+        # Get current time
+        now = datetime.now()
+        predictions = []
+        
+        for i in range(horizon):
+            # Predict for each hour in the horizon
+            future_time = now + timedelta(hours=i)
+            hour = future_time.hour
+            
+            # Simple heuristic based on time of day
+            if 6 <= hour < 10:  # Morning ramp-up
+                power = 200 + (hour - 6) * 100
+            elif 10 <= hour < 16:  # Peak production
+                power = 600 - abs(hour - 13) * 50
+            elif 16 <= hour < 20:  # Evening ramp-down
+                power = 400 - (hour - 16) * 100
+            else:  # Night
+                power = 0
+                
+            # Add some randomness
+            power = max(0, power * (0.9 + 0.2 * np.random.random()))
+            predictions.append(float(power))
+            
+        return predictions
+    
+    def forecast(self, start_time, horizon=24):
+        """
+        Generate power forecast for a specific time period.
+        
+        Args:
+            start_time: Datetime for the start of the forecast
+            horizon: Number of hours to forecast
+            
+        Returns:
+            DataFrame with timestamp and predicted power
+        """
+        # Get recent data from database (would be implemented in a real system)
+        # For now, we'll use the baseline prediction
+        predictions = self._baseline_prediction(horizon)
+        
+        # Create timestamps for the forecast period
+        timestamps = [start_time + timedelta(hours=i) for i in range(horizon)]
+        
+        # Create forecast DataFrame
+        forecast_df = pd.DataFrame({
+            'timestamp': timestamps,
+            'power_w': predictions
+        })
+        
+        return forecast_df
     
     def _predict_with_model(self, recent_df, horizon):
         """Make predictions using the LSTM model."""
@@ -143,8 +272,8 @@ class SolarPowerPredictor:
         logger.info(f"Using baseline prediction for horizon={horizon}")
         
         # Calculate power if not already in DataFrame
-        if "power" in recent_df.columns:
-            power = recent_df["power"].values
+        if "power_w" in recent_df.columns:
+            power = recent_df["power_w"].values
         elif "voltage" in recent_df.columns and "current" in recent_df.columns:
             power = recent_df["voltage"].values * recent_df["current"].values
         else:
