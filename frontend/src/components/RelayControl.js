@@ -12,8 +12,7 @@ const RelayControl = () => {
     const fetchRelayStates = async () => {
       try {
         setLoading(true);
-        // Using control endpoint since there's no specific relay status endpoint
-        const response = await axios.get('/api/control');
+        const response = await axios.get('/api/relays');
         setRelays(response.data);
         setError(null);
       } catch (err) {

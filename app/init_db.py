@@ -14,6 +14,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def init_db():
+    """Initialize the database by creating tables and adding sample data."""
+    create_tables()
+    insert_sample_data()
+
 def create_tables():
     """Create all database tables."""
     logger.info("Creating database tables...")

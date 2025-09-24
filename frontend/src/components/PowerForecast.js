@@ -24,12 +24,7 @@ const PowerForecast = () => {
       const deviceId = "solar_panel_01";
       const horizon = range === '24h' ? 24 : (range === '12h' ? 12 : 6);
       
-      const response = await axios.get('/api/forecast', {
-        params: {
-          device_id: deviceId,
-          horizon: horizon
-        }
-      });
+      const response = await axios.get(`/api/forecast?device_id=${deviceId}&horizon=${horizon}`);
       setForecastData(response.data);
       calculateStats(response.data);
       setError(null);
