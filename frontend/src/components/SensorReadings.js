@@ -37,7 +37,9 @@ const SensorReadings = () => {
   // Fetch current sensor readings
   const fetchCurrentReadings = async () => {
     try {
-      const response = await axios.get('/api/sensors/current');
+      const response = await axios.get('/api/latest', {
+        params: { device_id: 'solar_panel_01' }
+      });
       setCurrentReadings(response.data);
     } catch (error) {
       console.error('Error fetching current readings:', error);
@@ -49,30 +51,10 @@ const SensorReadings = () => {
   // Fetch historical sensor data
   const fetchHistoricalData = async () => {
     try {
-      const response = await axios.get('/api/sensors/historical');
+      // Since there's no direct historical endpoint, we'll simulate it for now
+      // In a real implementation, you would create a backend endpoint for this
+      simulateHistoricalData();
       
-      // Process the data for Chart.js
-      const labels = response.data.map(item => new Date(item.timestamp).toLocaleTimeString());
-      const powerData = response.data.map(item => item.power);
-      const lightData = response.data.map(item => item.lightLevel);
-      
-      setHistoricalData({
-        labels,
-        datasets: [
-          {
-            label: 'Power (W)',
-            data: powerData,
-            borderColor: 'rgb(255, 99, 132)',
-            backgroundColor: 'rgba(255, 99, 132, 0.5)',
-          },
-          {
-            label: 'Light Level (lux)',
-            data: lightData,
-            borderColor: 'rgb(53, 162, 235)',
-            backgroundColor: 'rgba(53, 162, 235, 0.5)',
-          },
-        ],
-      });
     } catch (error) {
       console.error('Error fetching historical data:', error);
       // Use simulated data if API fails

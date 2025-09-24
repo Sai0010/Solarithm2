@@ -98,19 +98,19 @@ class SolarPowerPredictor:
                 # Update input for next prediction (rolling window)
                 next_input = np.append(current_input[0, 1:, :], [[next_pred]], axis=0)
                 current_input = np.array([next_input])
-             
-             # Inverse transform predictions
-                if hasattr(self, 'scaler'):
-                 # Create a dummy array with the right shape for inverse transform
-                 dummy = np.zeros((len(predictions), len(self.features) + 1))
-                 dummy[:, -1] = predictions  # Assuming target is the last column
-                 dummy_inversed = self.scaler.inverse_transform(dummy)
-                 predictions = dummy_inversed[:, -1].tolist()
-             
-                 return predictions
-             
+            
+            # Inverse transform predictions
+            if hasattr(self, 'scaler'):
+                # Create a dummy array with the right shape for inverse transform
+                dummy = np.zeros((len(predictions), len(self.features) + 1))
+                dummy[:, -1] = predictions  # Assuming target is the last column
+                dummy_inversed = self.scaler.inverse_transform(dummy)
+                predictions = dummy_inversed[:, -1].tolist()
+            
+            return predictions
+              
         except Exception as e:
-            logger.error(f"Error during prediction: {e}")
+            logger.error(f"Error during prediction: {str(e)}. Using baseline prediction instead.")
             return self._baseline_prediction(horizon)
     
     def _prepare_input_data(self, df):
