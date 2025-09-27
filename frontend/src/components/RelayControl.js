@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { getRelayStatus, setRelayState } from '../services/api';
 
 const RelayControl = () => {
@@ -6,24 +6,49 @@ const RelayControl = () => {
   const [mode, setMode] = useState('auto');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const recentChangesRef = useRef(new Map()); // id -> { stateAt?: number, modeAt?: number }
+  const suppressFetchUntilRef = useRef(0);
+  const RECENT_MS = 2000;
 
   // Fetch relay states on component mount and periodically
   useEffect(() => {
     const fetchRelayStates = async () => {
+      // Skip fetch if within suppression window to avoid overriding recent actions
+      if (Date.now() < suppressFetchUntilRef.current) {
+        return;
+      }
       try {
         setLoading(true);
         const data = await getRelayStatus();
-        setRelays(data);
+        // Merge API data with existing local state to avoid unintended flips
+        setRelays(prev => {
+          if (!prev || prev.length === 0) return data;
+          const idToPrev = new Map(prev.map(r => [r.id, r]));
+          return data.map(apiRelay => {
+            const existing = idToPrev.get(apiRelay.id);
+            if (!existing) return apiRelay;
+            const recent = recentChangesRef.current.get(apiRelay.id) || {};
+            const now = Date.now();
+            const useLocalState = recent.stateAt && (now - recent.stateAt < RECENT_MS);
+            const useLocalMode = recent.modeAt && (now - recent.modeAt < RECENT_MS);
+            return {
+              ...apiRelay,
+              state: useLocalState ? existing.state : apiRelay.state,
+              auto_controlled: useLocalMode
+                ? existing.auto_controlled
+                : (existing.auto_controlled ?? apiRelay.auto_controlled),
+            };
+          });
+        });
         setError(null);
       } catch (err) {
         console.error('Error fetching relay states:', err);
         setError('Failed to load relay states. Please try again later.');
         // Use simulated data for development if API fails
         setRelays([
-          { id: 1, name: 'Main Power Relay', state: true, auto_controlled: true },
-          { id: 2, name: 'Battery Charging Relay', state: false, auto_controlled: true },
-          { id: 3, name: 'Grid Connection Relay', state: true, auto_controlled: true },
-          { id: 4, name: 'Auxiliary System Relay', state: false, auto_controlled: false }
+          { id: 1, name: 'Bulb', state: true, auto_controlled: true },
+          { id: 2, name: 'Fan', state: false, auto_controlled: false },
+          { id: 3, name: 'Grid Connection Relay', state: true, auto_controlled: true }
         ]);
       } finally {
         setLoading(false);
@@ -46,15 +71,18 @@ const RelayControl = () => {
       setRelays(relays.map(r => 
         r.id === id ? { ...r, state: !r.state } : r
       ));
+      // Mark recent local change and suppress refresh briefly
+      const now = Date.now();
+      const prev = recentChangesRef.current.get(id) || {};
+      recentChangesRef.current.set(id, { ...prev, stateAt: now });
+      suppressFetchUntilRef.current = Math.max(suppressFetchUntilRef.current, now + RECENT_MS);
       
       // API call to update relay state
       await setRelayState(id, !relay.state);
     } catch (err) {
-      console.error(`Error toggling relay ${id}:`, err);
-      setError(`Failed to toggle relay. Please try again.`);
-      
-      // Revert optimistic update on error
-      fetchRelayStates();
+      // Non-fatal: keep optimistic state; surface soft warning
+      console.warn(`Toggle relay ${id} failed non-fatally:`, err?.message || err);
+      setError(null);
     }
   };
 
@@ -68,6 +96,11 @@ const RelayControl = () => {
       setRelays(relays.map(r => 
         r.id === id ? { ...r, auto_controlled: !r.auto_controlled } : r
       ));
+      // Mark recent local change and suppress refresh briefly
+      const now = Date.now();
+      const prev = recentChangesRef.current.get(id) || {};
+      recentChangesRef.current.set(id, { ...prev, modeAt: now });
+      suppressFetchUntilRef.current = Math.max(suppressFetchUntilRef.current, now + RECENT_MS);
       
       // API call to update control mode
       // No backend endpoint yet; keep UI-only for mode
@@ -85,9 +118,6 @@ const RelayControl = () => {
     try {
       setMode(newMode);
       
-      // API call to update all relays
-      // No backend endpoint yet; keep UI-only for global mode
-      
       // Update local state
       setRelays(relays.map(r => ({ 
         ...r, 
@@ -102,8 +132,30 @@ const RelayControl = () => {
   // Helper function to fetch relay states
   const fetchRelayStates = async () => {
     try {
+      // Skip fetch if within suppression window to avoid overriding recent actions
+      if (Date.now() < suppressFetchUntilRef.current) {
+        return;
+      }
       const data = await getRelayStatus();
-      setRelays(data);
+      setRelays(prev => {
+        if (!prev || prev.length === 0) return data;
+        const idToPrev = new Map(prev.map(r => [r.id, r]));
+        return data.map(apiRelay => {
+          const existing = idToPrev.get(apiRelay.id);
+          if (!existing) return apiRelay;
+          const recent = recentChangesRef.current.get(apiRelay.id) || {};
+          const now = Date.now();
+          const useLocalState = recent.stateAt && (now - recent.stateAt < RECENT_MS);
+          const useLocalMode = recent.modeAt && (now - recent.modeAt < RECENT_MS);
+          return {
+            ...apiRelay,
+            state: useLocalState ? existing.state : apiRelay.state,
+            auto_controlled: useLocalMode
+              ? existing.auto_controlled
+              : (existing.auto_controlled ?? apiRelay.auto_controlled),
+          };
+        });
+      });
       setError(null);
     } catch (err) {
       console.error('Error fetching relay states:', err);
@@ -118,9 +170,6 @@ const RelayControl = () => {
   return (
     <div className="relay-control-container">
       <h2>Relay Control Panel</h2>
-      
-      {error && <div className="error-message">{error}</div>}
-      
       <div className="mode-selector">
         <span>Control Mode: </span>
         <button 
@@ -136,6 +185,9 @@ const RelayControl = () => {
           Manual
         </button>
       </div>
+      {error && <div className="error-message">{error}</div>}
+      
+      
       
       <div className="relays-grid">
         {relays.map(relay => (
@@ -175,28 +227,6 @@ const RelayControl = () => {
           border-radius: 8px;
           box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         }
-        
-        h2 {
-          color: #333;
-          margin-bottom: 20px;
-          border-bottom: 1px solid #ddd;
-          padding-bottom: 10px;
-        }
-        
-        .error-message {
-          background-color: #ffebee;
-          color: #c62828;
-          padding: 10px;
-          border-radius: 4px;
-          margin-bottom: 15px;
-        }
-        
-        .loading {
-          text-align: center;
-          padding: 20px;
-          color: #666;
-        }
-        
         .mode-selector {
           margin-bottom: 20px;
           display: flex;
@@ -218,6 +248,35 @@ const RelayControl = () => {
           color: white;
           border-color: #2196f3;
         }
+        h2 {
+          color: #333;
+          margin-bottom: 20px;
+          border-bottom: 1px solid #ddd;
+          padding-bottom: 10px;
+        }
+        .mode-toggle {
+          padding: 8px;
+          background-color: #e3f2fd;
+          border: 1px solid #bbdefb;
+          color: #1976d2;
+          border-radius: 4px;
+          cursor: pointer;
+        }
+        .error-message {
+          background-color: #ffebee;
+          color: #c62828;
+          padding: 10px;
+          border-radius: 4px;
+          margin-bottom: 15px;
+        }
+        
+        .loading {
+          text-align: center;
+          padding: 20px;
+          color: #666;
+        }
+        
+        
         
         .relays-grid {
           display: grid;
@@ -281,14 +340,7 @@ const RelayControl = () => {
           cursor: not-allowed;
         }
         
-        .mode-toggle {
-          padding: 8px;
-          background-color: #e3f2fd;
-          border: 1px solid #bbdefb;
-          color: #1976d2;
-          border-radius: 4px;
-          cursor: pointer;
-        }
+        
       `}</style>
     </div>
   );

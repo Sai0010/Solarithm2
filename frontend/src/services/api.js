@@ -30,10 +30,9 @@ export const getPowerForecast = async (deviceId, horizon = 6) => {
 export const getRelayStatus = async () => {
   // Simulated relay state
   return [
-    { id: 1, name: 'Main Power Relay', state: true, auto_controlled: true },
-    { id: 2, name: 'Battery Charging Relay', state: false, auto_controlled: true },
+    { id: 1, name: 'Bulb', state: true, auto_controlled: true },
+    { id: 2, name: 'Fan', state: false, auto_controlled: false },
     { id: 3, name: 'Grid Connection Relay', state: true, auto_controlled: true },
-    { id: 4, name: 'Auxiliary System Relay', state: false, auto_controlled: false },
   ];
 };
 
@@ -42,8 +41,9 @@ export const setRelayState = async (relayId, state, deviceId = 'solar_panel_01')
     // Log to backend; UI state is updated optimistically by callers
     await api.post('/control', { device_id: deviceId, relay_id: String(relayId), action: !!state });
   } catch (e) {
-    // Non-fatal for UI; surface to caller if needed
-    throw e;
+    // Swallow errors to prevent UI revert; log for diagnostics
+    // eslint-disable-next-line no-console
+    console.warn('setRelayState failed (non-fatal):', e?.message || e);
   }
 };
 
